@@ -47,9 +47,15 @@ jobs:
       - name: Build arm64 daemon (no kernel replacement)
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          mkdir -p original-release
+          gh release download gxr-v1.0.9 --repo 4uva4ek/KernelSU-GXR --dir original-release --pattern android12-5.10_kernelsu.ko --pattern SHA256SUMS.txt
+          (cd original-release && grep '  android12-5.10_kernelsu.ko$' SHA256SUMS.txt | sha256sum -c -)
+          cp original-release/android12-5.10_kernelsu.ko userspace/ksud/bin/aarch64/
           source .github/scripts/setup-rust-build.sh aarch64-linux-android 26
-          cargo build --locked --package ksuinit --target aarch64-linux-android --release
+          builtins="$($CLANG_PATH --print-resource-dir)/lib/linux/libclang_rt.builtins-aarch64-android.a"
+          RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wno-unused-command-line-argument -C link-arg=$builtins" cargo build --locked --package ksuinit --target aarch64-linux-android --release
           cp target/aarch64-linux-android/release/ksuinit userspace/ksud/bin/aarch64/
           cargo build --locked --package ksud --target aarch64-linux-android --release
           mkdir -p out/restart-candidate
