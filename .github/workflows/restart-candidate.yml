@@ -1,0 +1,66 @@
+name: Soft restart candidate
+
+on:
+  push:
+    branches: [build/tailscale-restart-candidate]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+          components: clippy, rustfmt
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r29
+      - name: Set up tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev pkg-config
+          cargo install cargo-ndk --locked
+      - name: Android check, clippy, format (in order)
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          source .github/scripts/setup-rust-build.sh aarch64-linux-android 26
+          cd userspace/ksud
+          cargo ndk -t arm64-v8a check
+          cargo ndk -t arm64-v8a clippy -- -D warnings
+          cargo fmt
+          git diff --exit-code
+      - name: Host regression tests
+        run: |
+          for suite in openxr-apps soft-reboot-guard service-guard restart-stage init-event; do
+            cargo test --locked --manifest-path scripts/tests/$suite/Cargo.toml
+          done
+      - name: Build arm64 daemon (no kernel replacement)
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          source .github/scripts/setup-rust-build.sh aarch64-linux-android 26
+          cargo build --locked --package ksuinit --target aarch64-linux-android --release
+          cp target/aarch64-linux-android/release/ksuinit userspace/ksud/bin/aarch64/
+          cargo build --locked --package ksud --target aarch64-linux-android --release
+          mkdir -p out/restart-candidate
+          cp target/aarch64-linux-android/release/ksud out/restart-candidate/ksud
+          printf 'Source commit: %s\nUnsigned daemon-only test candidate. Kernel and Manager APK unchanged.\n' "$GITHUB_SHA" > out/restart-candidate/BUILD-INFO.txt
+          cd out/restart-candidate
+          sha256sum ksud > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: restart-candidate
+          path: |
+            out/restart-candidate/
+            userspace/ksud/src/openxr_apps.rs
