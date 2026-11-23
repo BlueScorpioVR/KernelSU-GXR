@@ -74,8 +74,7 @@ fn print_notes(files: &Payload, properties: &BTreeMap<String, String>) {
     let lines = if notes.is_empty() {
         properties
             .get("description")
-            .map(|d| wrap(d, 72))
-            .unwrap_or_default()
+            .map_or_else(Vec::new, |d| wrap(d, 72))
     } else {
         notes
     };

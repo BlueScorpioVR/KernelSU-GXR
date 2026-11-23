@@ -156,7 +156,10 @@ pub const AUDIT: &[Audit] = &[
         apply: &["control.sh", "run"],
         background: true,
         target: Some("com.android.systemui"),
-        status: Some((&["control.sh", "status"], "Runtime supervisor state is present")),
+        status: Some((
+            &["control.sh", "status"],
+            "Runtime supervisor state is present",
+        )),
         summary: "Attaches to the current SystemUI once; a restart is needed to attach again.",
     },
 ];
@@ -167,12 +170,12 @@ pub fn lookup(id: &str) -> Option<&'static Audit> {
 }
 
 /// The checkbox default: on only for the exact release that was inspected.
-pub fn default_enabled(entry: &Audit, installed_version_code: u64) -> bool {
+pub const fn default_enabled(entry: &Audit, installed_version_code: u64) -> bool {
     entry.version_code == installed_version_code
 }
 
 #[cfg(target_os = "android")]
-pub use runtime::{apply, set_pref, state_for, LiveState};
+pub use runtime::{apply, set_pref, state_for};
 
 #[cfg(target_os = "android")]
 mod runtime {
@@ -230,8 +233,7 @@ mod runtime {
 
     fn boot_id() -> String {
         fs::read_to_string("/proc/sys/kernel/random/boot_id")
-            .map(|value| value.trim().to_owned())
-            .unwrap_or_default()
+            .map_or_else(|_| String::new(), |value| value.trim().to_owned())
     }
 
     fn module_is_disabled(module_path: &Path) -> bool {
@@ -359,8 +361,14 @@ mod runtime {
             return false;
         };
         let id = entry.id;
-        run_script(module_path, id, &format!("{id}.status"), argv, STATUS_TIMEOUT)
-            .is_ok_and(|(status, output)| status.success() && output.contains(needle))
+        run_script(
+            module_path,
+            id,
+            &format!("{id}.status"),
+            argv,
+            STATUS_TIMEOUT,
+        )
+        .is_ok_and(|(status, output)| status.success() && output.contains(needle))
     }
 
     /// Poll the probe while a backgrounded activation settles.
@@ -390,10 +398,10 @@ mod runtime {
             if first != name.as_bytes() {
                 continue;
             }
-            let Ok(stat) = fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            let Ok(stat_line) = fs::read_to_string(format!("/proc/{pid}/stat")) else {
                 continue;
             };
-            let Some((_, after)) = stat.rsplit_once(')') else {
+            let Some((_, after)) = stat_line.rsplit_once(')') else {
                 continue;
             };
             let Some(start) = after.split_whitespace().nth(19) else {
@@ -448,7 +456,9 @@ mod runtime {
         let reason = if default {
             entry.summary.to_owned()
         } else {
-            format!("Not audited for the installed version (v{installed_version_code}); Apply now is off by default.")
+            format!(
+                "Not audited for the installed version (v{installed_version_code}); Apply now is off by default."
+            )
         };
         Some(LiveState {
             mode: entry.mode,
@@ -594,8 +604,14 @@ mod tests {
         let curvature = lookup("gxr_window_curvature").expect("curvature audited");
         assert_eq!(curvature.mode, Mode::Once);
         assert!(default_enabled(curvature, 103));
-        assert!(!default_enabled(curvature, 104), "newer release is unverified");
-        assert!(!default_enabled(curvature, 102), "older release is unverified");
+        assert!(
+            !default_enabled(curvature, 104),
+            "newer release is unverified"
+        );
+        assert!(
+            !default_enabled(curvature, 102),
+            "older release is unverified"
+        );
 
         let haptics = lookup("gxr_haptic_main").expect("haptics audited");
         assert_eq!(haptics.mode, Mode::Live);
