@@ -53,6 +53,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Delete
@@ -63,6 +64,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonColors
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CheckableDropdownMenuItem
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenuGroup
 import androidx.compose.material3.DropdownMenuPopup
 import androidx.compose.material3.FilledTonalButton
@@ -530,6 +532,8 @@ private fun ModuleList(
                     }
                 },
                 onExecuteAction = { actions.onExecuteModuleAction(module) },
+                onSetLiveApplyPref = { actions.onSetLiveApplyPref(module, it) },
+                onApplyNow = { actions.onApplyModuleNow(module) },
                 closeSearch = { closeSearch() }
             )
         }
@@ -702,6 +706,8 @@ private fun ModuleItem(
     onAddShortcut: (ShortcutType) -> Unit,
     onOpenWebUi: () -> Unit,
     onExecuteAction: () -> Unit,
+    onSetLiveApplyPref: (Boolean) -> Unit,
+    onApplyNow: () -> Unit,
     closeSearch: () -> Unit
 ) {
     val displayDescription = if (deprecatedBy != null) stringResource(R.string.gxr_module_obsolete, deprecatedBy) + "\n\n${module.description}" else module.description
@@ -805,6 +811,43 @@ private fun ModuleItem(
                 )
             }
 
+            if (module.liveApply != null && !module.liveApplyApplied) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = module.liveApplyEnabled,
+                        onCheckedChange = {
+                            haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
+                            onSetLiveApplyPref(it)
+                        },
+                        enabled = !module.remove && !module.update,
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.module_apply_now),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        module.liveApplyReason?.let { reason ->
+                            Text(
+                                text = reason,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            } else if (module.liveApplyApplied) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.module_apply_now_applied),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+
             Row(modifier = Modifier.padding(vertical = 4.dp)) {
                 if (module.metamodule) {
                     StatusTag(
@@ -862,6 +905,37 @@ private fun ModuleItem(
                                         fontSize = MaterialTheme.typography.labelMedium.fontSize
                                     )
                                 }
+                            }
+                        }
+
+                        if (module.liveApplyEnabled && module.liveApply != null &&
+                            !module.liveApplyApplied && module.enabled
+                        ) {
+                            CombinedClickableButton(
+                                onClick = {
+                                    onApplyNow()
+                                    closeSearch()
+                                },
+                                onLongClick = {},
+                                modifier = Modifier.defaultMinSize(52.dp, 32.dp),
+                                shape = ButtonDefaults.filledTonalShape,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                                ),
+                                contentPadding = ButtonDefaults.TextButtonContentPadding
+                            ) {
+                                Icon(
+                                    modifier = Modifier.size(20.dp),
+                                    imageVector = Icons.Outlined.Bolt,
+                                    contentDescription = null
+                                )
+                                Text(
+                                    modifier = Modifier.padding(start = 7.dp),
+                                    text = stringResource(R.string.module_apply_now_short),
+                                    fontFamily = MaterialTheme.typography.labelMedium.fontFamily,
+                                    fontSize = MaterialTheme.typography.labelMedium.fontSize
+                                )
                             }
                         }
 

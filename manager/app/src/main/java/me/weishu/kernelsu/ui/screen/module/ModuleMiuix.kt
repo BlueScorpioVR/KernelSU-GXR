@@ -57,7 +57,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material3.Checkbox
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.runtime.Composable
@@ -740,6 +742,12 @@ private fun ModuleList(
                     onExecuteAction = {
                         actions.onExecuteModuleAction(currentModuleState.value)
                     },
+                    onSetLiveApplyPref = { enabled ->
+                        actions.onSetLiveApplyPref(currentModuleState.value, enabled)
+                    },
+                    onApplyNow = {
+                        actions.onApplyModuleNow(currentModuleState.value)
+                    },
                     onAddActionShortcut = { type: ShortcutType ->
                         onModuleAddShortcut(currentModuleState.value, type)
                     },
@@ -767,6 +775,8 @@ fun ModuleItem(
     onCheckChanged: (Boolean) -> Unit,
     onUpdate: () -> Unit,
     onExecuteAction: () -> Unit,
+    onSetLiveApplyPref: (Boolean) -> Unit,
+    onApplyNow: () -> Unit,
     onAddActionShortcut: (ShortcutType) -> Unit,
     onOpenWebUi: () -> Unit
 ) {
@@ -887,6 +897,45 @@ fun ModuleItem(
             )
         }
 
+        if (module.liveApply != null && !module.liveApplyApplied) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Checkbox(
+                    checked = module.liveApplyEnabled,
+                    onCheckedChange = { onSetLiveApplyPref(it) },
+                    enabled = !module.remove && !module.update,
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.module_apply_now),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight(550),
+                        color = colorScheme.onSurface,
+                    )
+                    module.liveApplyReason?.let { reason ->
+                        Text(
+                            text = reason,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight(550),
+                            color = colorScheme.onSurfaceVariantSummary,
+                        )
+                    }
+                }
+            }
+        } else if (module.liveApplyApplied) {
+            Text(
+                modifier = Modifier.padding(top = 6.dp),
+                text = stringResource(R.string.module_apply_now_applied),
+                fontSize = 12.sp,
+                fontWeight = FontWeight(550),
+                color = colorScheme.primary,
+            )
+        }
+
         HorizontalDivider(
             modifier = Modifier.padding(vertical = 8.dp),
             thickness = 0.5.dp,
@@ -933,6 +982,35 @@ fun ModuleItem(
                                     fontSize = 15.sp,
                                 )
                             }
+                        }
+                    }
+                    if (module.liveApplyEnabled && module.liveApply != null &&
+                        !module.liveApplyApplied && module.enabled
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .heightIn(min = 35.dp)
+                                .widthIn(min = 35.dp)
+                                .clip(CircleShape)
+                                .background(colorScheme.tertiaryContainer.copy(alpha = 0.8f))
+                                .combinedClickable(onClick = onApplyNow, onLongClick = null)
+                                .padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                modifier = Modifier.size(22.dp),
+                                imageVector = Icons.Rounded.Bolt,
+                                tint = colorScheme.onTertiaryContainer,
+                                contentDescription = null
+                            )
+                            Text(
+                                modifier = Modifier.padding(start = 4.dp, end = 2.dp),
+                                text = stringResource(R.string.module_apply_now_short),
+                                color = colorScheme.onTertiaryContainer,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 15.sp,
+                            )
                         }
                     }
                     if (module.hasWebUi && module.enabled) {

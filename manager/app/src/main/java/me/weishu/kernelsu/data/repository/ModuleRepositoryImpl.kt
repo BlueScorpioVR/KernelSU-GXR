@@ -43,6 +43,11 @@ class ModuleRepositoryImpl : ModuleRepository {
                         metamodule = (obj.optInt("metamodule") != 0) || obj.optBoolean("metamodule"),
                         actionIconPath = obj.optString("actionIcon").takeIf { it.isNotBlank() },
                         webUiIconPath = obj.optString("webuiIcon").takeIf { it.isNotBlank() },
+                        liveApply = obj.optString("liveApply").takeIf { it == "live" || it == "once" },
+                        liveApplyDefault = obj.optBoolean("liveApplyDefault", false),
+                        liveApplyEnabled = obj.optBoolean("liveApplyEnabled", false),
+                        liveApplyApplied = obj.optBoolean("liveApplyApplied", false),
+                        liveApplyReason = obj.optString("liveApplyReason").takeIf { it.isNotBlank() },
                         deprecatedBy = obj.optString("gxrDeprecatedBy").takeIf { Regex("gxr_[A-Za-z0-9_-]+").matches(it) },
                         replaces = obj.optString("gxrReplaces").split(',').filter { Regex("gxr_[A-Za-z0-9_-]+").matches(it) }.take(16),
                     )

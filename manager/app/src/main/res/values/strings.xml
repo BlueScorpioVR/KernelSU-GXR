@@ -116,6 +116,13 @@
     <string name="module_downloading">Downloading module: %s</string>
     <string name="module_start_downloading">Start downloading: %s</string>
     <string name="module_action_success">Module action executed successfully.</string>
+    <string name="module_apply_now">Apply now</string>
+    <string name="module_apply_now_short">Apply</string>
+    <string name="module_apply_now_applied">Applied — a restart is needed to apply it again</string>
+    <string name="module_apply_now_started">Applying %s…</string>
+    <string name="module_apply_now_success">%s applied without a restart</string>
+    <string name="module_apply_now_failed">%1$s could not be applied; see /dev/ksu-live-apply/%2$s.apply.log</string>
+    <string name="module_apply_now_pref_failed">Could not update Apply now for %s</string>
     <string name="new_version_available">New version %s is available, click to upgrade!</string>
     <string name="manager_update_downloading">Downloading KernelSU GXR %s…</string>
     <string name="manager_update_installing">Verified. Installing the Manager update; the app will restart.</string>

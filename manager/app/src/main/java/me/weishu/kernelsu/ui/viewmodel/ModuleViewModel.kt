@@ -43,6 +43,8 @@ import okhttp3.Request
 import java.text.Collator
 import java.util.Locale
 import kotlin.time.Duration.Companion.milliseconds
+import me.weishu.kernelsu.ui.util.applyModuleNow as applyModuleNowUtil
+import me.weishu.kernelsu.ui.util.setLiveApplyPref as setLiveApplyPrefUtil
 import me.weishu.kernelsu.ui.util.toggleModule as toggleModuleUtil
 import me.weishu.kernelsu.ui.util.undoUninstallModule as undoUninstallModuleUtil
 import me.weishu.kernelsu.ui.util.uninstallModule as uninstallModuleUtil
@@ -388,6 +390,47 @@ class ModuleViewModel(
             } else {
                 val message = if (module.enabled) R.string.module_failed_to_disable else R.string.module_failed_to_enable
                 emitEffect(ModuleEffect.SnackBar(res.getString(message).format(module.name)))
+            }
+        }
+    }
+
+    fun setLiveApplyPref(module: Module, enabled: Boolean) {
+        viewModelScope.launch {
+            val success = withContext(Dispatchers.IO) {
+                setLiveApplyPrefUtil(module.id, enabled)
+            }
+            if (success) {
+                fetchModuleList(checkUpdate = false, resort = false)
+            } else {
+                emitEffect(
+                    ModuleEffect.Toast(
+                        ksuApp.resources.getString(R.string.module_apply_now_pref_failed).format(module.name)
+                    )
+                )
+            }
+        }
+    }
+
+    fun applyModuleNow(module: Module) {
+        viewModelScope.launch {
+            val res = ksuApp.resources
+            emitEffect(ModuleEffect.Toast(res.getString(R.string.module_apply_now_started).format(module.name)))
+            val success = withContext(Dispatchers.IO) {
+                applyModuleNowUtil(module.id)
+            }
+            fetchModuleList(checkUpdate = false, resort = false)
+            if (success) {
+                emitEffect(
+                    ModuleEffect.Toast(
+                        res.getString(R.string.module_apply_now_success).format(module.name)
+                    )
+                )
+            } else {
+                emitEffect(
+                    ModuleEffect.Toast(
+                        res.getString(R.string.module_apply_now_failed).format(module.name, module.id)
+                    )
+                )
             }
         }
     }

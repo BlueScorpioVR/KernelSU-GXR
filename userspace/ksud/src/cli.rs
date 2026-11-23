@@ -330,6 +330,21 @@ enum Module {
         id: String,
     },
 
+    /// apply an audited module without restarting Android
+    LiveApply {
+        /// module id
+        id: String,
+    },
+
+    /// set whether Apply now is offered for module <id>
+    LivePref {
+        /// module id
+        id: String,
+        /// on or off
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
+    },
+
     /// list all modules
     List,
 
@@ -563,6 +578,8 @@ pub fn run() -> Result<()> {
                 Module::Enable { id } => module::enable_module(&id),
                 Module::Disable { id } => module::disable_module(&id),
                 Module::Action { id } => module::run_action(&id),
+                Module::LiveApply { id } => crate::live_apply::apply(&id),
+                Module::LivePref { id, state } => crate::live_apply::set_pref(&id, &state),
                 Module::List => module::list_modules(),
                 Module::Config { internal, command } => {
                     let module_id = match internal {

@@ -163,6 +163,20 @@ fun toggleModule(id: String, enable: Boolean): Boolean {
     return result
 }
 
+fun setLiveApplyPref(id: String, enabled: Boolean): Boolean {
+    val cmd = "module live-pref $id ${if (enabled) "on" else "off"}"
+    val result = execKsud(cmd, true)
+    Log.i(TAG, "$cmd result: $result")
+    return result
+}
+
+fun applyModuleNow(id: String): Boolean {
+    val cmd = "module live-apply $id"
+    val result = execKsud(cmd, true)
+    Log.i(TAG, "$cmd result: $result")
+    return result
+}
+
 fun undoUninstallModule(id: String): Boolean {
     val cmd = "module undo-uninstall $id"
     val result = execKsud(cmd, true)

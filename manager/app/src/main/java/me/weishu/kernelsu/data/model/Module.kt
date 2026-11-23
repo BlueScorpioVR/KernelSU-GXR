@@ -19,6 +19,15 @@ data class Module(
     val metamodule: Boolean,
     val actionIconPath: String?,
     val webUiIconPath: String?,
+    /** "live" or "once" when the installed release is audited for Apply now. */
+    val liveApply: String? = null,
+    /** True when the installed version code matches the audited release. */
+    val liveApplyDefault: Boolean = false,
+    /** Effective checkbox state, from the per-module preference. */
+    val liveApplyEnabled: Boolean = false,
+    /** A one-shot module that is still attached to its target process. */
+    val liveApplyApplied: Boolean = false,
+    val liveApplyReason: String? = null,
     val deprecatedBy: String? = null,
     val replaces: List<String> = emptyList(),
 )

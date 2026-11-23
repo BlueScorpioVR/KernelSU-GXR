@@ -1064,6 +1064,23 @@ fn list_module(path: &str) -> Vec<HashMap<String, String>> {
         module_prop_map.insert("action".to_owned(), action.to_string());
         module_prop_map.insert("mount".to_owned(), need_mount.to_string());
 
+        // Audited live-apply capability. Unaudited modules simply omit the fields.
+        let live = crate::live_apply::state_for(
+            module_prop_map.get("id").map_or("", String::as_str),
+            module_prop_map
+                .get("versionCode")
+                .and_then(|value| value.trim().parse::<u64>().ok())
+                .unwrap_or(0),
+            &path,
+        );
+        if let Some(live) = live {
+            module_prop_map.insert("liveApply".to_owned(), live.mode.as_str().to_owned());
+            module_prop_map.insert("liveApplyReason".to_owned(), live.reason);
+            module_prop_map.insert("liveApplyDefault".to_owned(), live.default.to_string());
+            module_prop_map.insert("liveApplyEnabled".to_owned(), live.enabled.to_string());
+            module_prop_map.insert("liveApplyApplied".to_owned(), live.applied.to_string());
+        }
+
         resolve_module_icon_path(&mut module_prop_map, "actionIcon", &path);
         resolve_module_icon_path(&mut module_prop_map, "webuiIcon", &path);
 

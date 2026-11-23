@@ -78,4 +78,6 @@ data class ModuleActions(
     val onUndoUninstallModule: (Module) -> Unit,
     val onOpenFlash: (List<Uri>) -> Unit,
     val onExecuteModuleAction: (Module) -> Unit,
+    val onSetLiveApplyPref: (Module, Boolean) -> Unit,
+    val onApplyModuleNow: (Module) -> Unit,
 )

@@ -170,6 +170,12 @@ fun ModulePager(
             navigator.push(Route.ExecuteModuleAction(module.id))
             viewModel.markNeedRefresh()
         },
+        onSetLiveApplyPref = { module, enabled ->
+            viewModel.setLiveApplyPref(module, enabled)
+        },
+        onApplyModuleNow = { module ->
+            viewModel.applyModuleNow(module)
+        },
     )
 
     when (uiMode) {
