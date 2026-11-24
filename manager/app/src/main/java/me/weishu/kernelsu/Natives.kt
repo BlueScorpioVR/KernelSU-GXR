@@ -127,6 +127,12 @@ object Natives {
         external get
 
     fun isFullFeatured(): Boolean {
+        // PR builds are signed with a throwaway key and are not the device's
+        // manager, but they are installed for review/testing. Let them reach the
+        // main pages when they have root, so module work can be exercised.
+        if (BuildConfig.IS_PR_BUILD) {
+            return rootAvailable()
+        }
         return isManager && kernelUAPIVersion == managerUAPIVersion && rootAvailable()
     }
 
