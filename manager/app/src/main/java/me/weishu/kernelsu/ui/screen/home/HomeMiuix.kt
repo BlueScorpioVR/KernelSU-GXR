@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.filled.VolunteerActivism
 import androidx.compose.material.icons.rounded.CheckCircleOutline
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
@@ -364,6 +365,28 @@ private fun StatusCard(
                                 }
                             }
                         }
+                    }
+                }
+            }
+
+            state.isManagerPrBuild -> {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Card(
+                        modifier = Modifier.weight(1f),
+                        showIndication = false,
+                    ) {
+                        BasicComponent(
+                            title = stringResource(R.string.home_pr_build),
+                            summary = stringResource(R.string.home_pr_build_summary),
+                            startAction = {
+                                Icon(
+                                    Icons.Rounded.Info,
+                                    stringResource(R.string.home_pr_build),
+                                    modifier = Modifier.padding(end = 6.dp),
+                                    tint = colorScheme.onBackground,
+                                )
+                            }
+                        )
                     }
                 }
             }
