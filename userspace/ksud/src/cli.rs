@@ -71,6 +71,8 @@ enum Commands {
 
     /// Emulate system reboot
     SoftReboot,
+    #[command(hide = true)]
+    SuperviseScript { path: PathBuf, generation: String },
 
     /// Load a kernel module with kallsyms access
     Insmod {
@@ -290,6 +292,12 @@ enum Module {
     Install {
         /// module zip file path
         zip: String,
+        /// Explicitly approved installed IDs replaced by this package
+        #[arg(long, value_delimiter = ',')]
+        replace: Vec<String>,
+        /// Explicitly approved installed dependencies to disable and restore
+        #[arg(long, value_delimiter = ',')]
+        disable_conflicts: Vec<String>,
     },
 
     /// Undo module uninstall mark <id>
@@ -320,6 +328,24 @@ enum Module {
     Action {
         // module id
         id: String,
+    },
+
+    /// apply an audited module without restarting Android
+    LiveApply {
+        /// module id
+        id: String,
+    },
+
+    /// apply every checked module without restarting Android
+    LiveApplyAll,
+
+    /// set whether Apply now is offered for module <id>
+    LivePref {
+        /// module id
+        id: String,
+        /// on or off
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
     },
 
     /// list all modules
@@ -519,24 +545,45 @@ pub fn run() -> Result<()> {
 
     let result = match cli.command {
         Commands::PostFsData => init_event::on_post_fs_data(),
-        Commands::BootCompleted => {
-            init_event::on_boot_completed();
-            Ok(())
-        }
+        Commands::BootCompleted => init_event::on_boot_completed(),
 
         Commands::SoftReboot => crate::soft_reboot::soft_reboot(),
+        Commands::SuperviseScript { path, generation } => {
+            crate::restart_stage::supervise(&path, &generation)
+        }
 
         Commands::Insmod { module, params } => debug::insmod(&module, &params),
 
         Commands::Module { command } => {
             utils::switch_mnt_ns(1)?;
+            let changes_gxr = match &command {
+                Module::Install { .. } => true,
+                Module::Enable { id }
+                | Module::Disable { id }
+                | Module::Uninstall { id }
+                | Module::UndoUninstall { id }
+                | Module::Action { id } => id.starts_with("gxr_"),
+                _ => false,
+            };
+            let _control = if changes_gxr {
+                Some(crate::gxr_update::control_lock()?)
+            } else {
+                None
+            };
             match command {
-                Module::Install { zip } => module::install_module(&zip),
+                Module::Install {
+                    zip,
+                    replace,
+                    disable_conflicts,
+                } => module::install_module(&zip, &replace, &disable_conflicts),
                 Module::UndoUninstall { id } => module::undo_uninstall_module(&id),
                 Module::Uninstall { id } => module::uninstall_module(&id),
                 Module::Enable { id } => module::enable_module(&id),
                 Module::Disable { id } => module::disable_module(&id),
                 Module::Action { id } => module::run_action(&id),
+                Module::LiveApply { id } => crate::live_apply::apply(&id),
+                Module::LiveApplyAll => crate::live_apply::apply_all(),
+                Module::LivePref { id, state } => crate::live_apply::set_pref(&id, &state),
                 Module::List => module::list_modules(),
                 Module::Config { internal, command } => {
                     let module_id = match internal {
@@ -675,8 +722,7 @@ pub fn run() -> Result<()> {
                 info!("KernelSU not available, exiting services");
                 std::process::exit(0);
             }
-            init_event::on_services();
-            Ok(())
+            init_event::on_services()
         }
         Commands::Sulogd => sulog::run_sulogd(),
         Commands::Profile { command } => match command {

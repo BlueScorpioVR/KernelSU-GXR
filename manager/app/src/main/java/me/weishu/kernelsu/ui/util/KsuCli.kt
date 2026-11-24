@@ -29,6 +29,7 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
+import java.util.zip.ZipFile
 
 /**
  * @author weishu
@@ -162,6 +163,27 @@ fun toggleModule(id: String, enable: Boolean): Boolean {
     return result
 }
 
+fun setLiveApplyPref(id: String, enabled: Boolean): Boolean {
+    val cmd = "module live-pref $id ${if (enabled) "on" else "off"}"
+    val result = execKsud(cmd, true)
+    Log.i(TAG, "$cmd result: $result")
+    return result
+}
+
+fun applyModuleNow(id: String): Boolean {
+    val cmd = "module live-apply $id"
+    val result = execKsud(cmd, true)
+    Log.i(TAG, "$cmd result: $result")
+    return result
+}
+
+fun applyAllModulesNow(): Boolean {
+    val cmd = "module live-apply-all"
+    val result = execKsud(cmd, true)
+    Log.i(TAG, "$cmd result: $result")
+    return result
+}
+
 fun undoUninstallModule(id: String): Boolean {
     val cmd = "module undo-uninstall $id"
     val result = execKsud(cmd, true)
@@ -202,21 +224,39 @@ private fun flashWithIO(
 fun flashModule(
     uri: Uri,
     onStdout: (String) -> Unit,
-    onStderr: (String) -> Unit
+    onStderr: (String) -> Unit,
+    approval: me.weishu.kernelsu.ui.util.module.ModuleDependencyApproval? = null,
 ): FlashResult {
     val resolver = ksuApp.contentResolver
-    with(resolver.openInputStream(uri)) {
-        val file = File(ksuApp.cacheDir, "module.zip")
+    val file = File.createTempFile("module-", ".zip", ksuApp.cacheDir)
+    try {
+        val input = resolver.openInputStream(uri) ?: error("Cannot open module ZIP")
         file.outputStream().use { output ->
-            this?.copyTo(output)
+            input.use { it.copyTo(output) }
         }
-        val cmd = "module install ${file.absolutePath}"
+        val gxr = ZipFile(file).use { zip ->
+            val prop = zip.getEntry("module.prop") ?: error("Missing module.prop")
+            require(prop.size in 1..16384) { "Invalid module.prop size" }
+            zip.getInputStream(prop).bufferedReader().use { reader ->
+                reader.lineSequence().any { it.startsWith("id=gxr_") }
+            }
+        }
+        if (approval != null) {
+            require(me.weishu.kernelsu.ui.util.module.ModuleDependencies.sha256(file) == approval.sha256) {
+                "Module ZIP changed after dependency review; select it again"
+            }
+        }
+        val approvedIds = (approval?.remove.orEmpty() + approval?.disable.orEmpty())
+        require(approvedIds.all { Regex("gxr_[A-Za-z0-9_-]+").matches(it) }) { "Invalid dependency consent" }
+        val replace = approval?.remove?.takeIf { it.isNotEmpty() }?.joinToString(",")?.let { " --replace $it" }.orEmpty()
+        val disable = approval?.disable?.takeIf { it.isNotEmpty() }?.joinToString(",")?.let { " --disable-conflicts $it" }.orEmpty()
+        val cmd = "module install '${file.absolutePath}'$replace$disable"
         val result = flashWithIO("${getKsuDaemonPath()} $cmd", onStdout, onStderr)
         Log.i("KernelSU", "install module $uri result: $result")
-
+        // GXR updates finish disabled; a restart is never the next automatic step.
+        return FlashResult(result, result.isSuccess && !gxr)
+    } finally {
         file.delete()
-
-        return FlashResult(result)
     }
 }
 
@@ -486,17 +526,16 @@ private fun readMagic(channel: DataSourceChannel): String {
     return String(buffer.array(), StandardCharsets.ISO_8859_1)
 }
 
-fun reboot(reason: String = "") {
+internal fun executeReboot(reason: String): Boolean {
     if (reason == "soft_reboot") {
-        execKsud("soft-reboot", true, true)
-        return
+        return execKsud("soft-reboot", true, true)
     }
     val shell = getRootShell()
     if (reason == "recovery") {
         // KEYCODE_POWER = 26, hide incorrect "Factory data reset" message
         ShellUtils.fastCmd(shell, "/system/bin/input keyevent 26")
     }
-    ShellUtils.fastCmd(shell, "/system/bin/svc power reboot $reason || /system/bin/reboot $reason")
+    return ShellUtils.fastCmdResult(shell, "/system/bin/svc power reboot $reason || /system/bin/reboot $reason")
 }
 
 fun rootAvailable(): Boolean {

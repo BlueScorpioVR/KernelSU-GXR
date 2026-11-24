@@ -28,6 +28,13 @@ use crate::{
 
 const WAITSYS_FD_ENV: &str = "KSU_WAITSYS_FD";
 
+#[path = "soft_reboot_guard.rs"]
+mod guard;
+use guard::RestartGuard;
+
+#[path = "openxr_apps.rs"]
+mod openxr_apps;
+
 struct Waitsys {
     child: Child,
     read_fd: OwnedFd,
@@ -154,36 +161,101 @@ fn set_rescue_party_boot_reason() {
     }
 }
 
-fn wait_for_boot_completed() -> Result<()> {
+fn wait_for_boot_completed(timeout: Duration) -> Result<()> {
     sys_prop::init().context("Failed to initialize system property API")?;
     let rp = resetprop();
     info!("waiting for boot complete");
-    rp.wait("sys.boot_completed", Some("0"), None)
-        .context("wait for sys.boot_completed failed")?;
+    ensure!(
+        rp.wait("sys.boot_completed", Some("0"), Some(timeout))
+            .context("wait for sys.boot_completed failed")?
+            && rp.get("sys.boot_completed").as_deref() == Some("1"),
+        "boot did not complete before the restart wake-lock deadline"
+    );
     Ok(())
 }
 
 pub fn soft_reboot() -> Result<()> {
+    let _module_control = crate::gxr_update::control_lock()?;
     // check it avoid user click "soft_reboot" in manager when version mismatch
     if let Err(e) = ksucalls::ensure_uapi_version_matched() {
         error!("{e:#}, skip soft_reboot");
-        return Ok(());
+        return Err(e);
     }
 
+    let mut restart_guard = None;
     utils::daemonize_with(true, || -> Result<()> {
         switch_mnt_ns(1)?;
         chdir("/")?;
+        // The intermediate child validates this before acknowledging success
+        // to Manager. The final daemon inherits both guards; parents use _exit.
+        restart_guard =
+            Some(RestartGuard::acquire().context("soft restart safety preflight failed")?);
         Ok(())
     })?;
 
-    info!("emulating soft_reboot!");
-    if let Err(e) = reset_boot_completed() {
-        warn!("reset boot completed failed: {e}");
+    let mut restart_guard = restart_guard.context("restart guard was not inherited")?;
+    info!("restart wake lock acquired; maximum lifetime 180 seconds");
+    let began = Instant::now();
+    let result = perform_soft_reboot(&restart_guard);
+    if let Err(error) = &result {
+        let _ = std::fs::write("/dev/ksu-restart-stage/error", format!("{error:#}\n"));
     }
-    run_stage(
-        "emulated-soft-reboot",
-        ScriptWait::Until(Instant::now() + defs::EMULATED_SOFT_REBOOT_TIMEOUT),
-    );
+    let release_result = restart_guard
+        .release()
+        .context("restart wake-lock release failed; kernel timeout remains armed");
+    if let Err(error) = &release_result {
+        warn!("{error:#}");
+    }
+    // _exit bypasses destructors; release and close the transaction explicitly.
+    drop(restart_guard);
+    let code = match result.and(release_result) {
+        Ok(()) => {
+            info!(
+                "Android restart complete in {} ms; module scripts dispatched; runtime activation must be checked with module Action; wake lock released",
+                began.elapsed().as_millis()
+            );
+            0
+        }
+        Err(error) => {
+            error!(
+                "soft restart failed after {} ms: {error:#}",
+                began.elapsed().as_millis()
+            );
+            1
+        }
+    };
+    unsafe { _exit(code) }
+}
+
+fn perform_soft_reboot(restart_guard: &RestartGuard) -> Result<()> {
+    info!("emulating soft_reboot!");
+    crate::restart_stage::begin()?;
+    let participants = crate::restart_stage::participants()?;
+    let deadline = Instant::now() + restart_guard.remaining();
+    // Preflight is before resetting Android's ready flag and before stopping it.
+    if let Err(error) = crate::restart_stage::run(&participants, "prepare", deadline) {
+        let _ = crate::restart_stage::run(&participants, "abort", deadline);
+        return Err(error);
+    }
+    let app_shutdown = (|| -> Result<()> {
+        reset_boot_completed()?;
+        run_stage(
+            "emulated-soft-reboot",
+            ScriptWait::Until(Instant::now() + defs::EMULATED_SOFT_REBOOT_TIMEOUT),
+        )?;
+        // Workers are paused and notified before apps are deliberately closed.
+        // Android/PackageManager must remain alive until force-stop is verified.
+        openxr_apps::close_before_restart(deadline)
+    })();
+    if let Err(error) = app_shutdown {
+        // Android has not been stopped: restore its ready flag and unwind any
+        // prepared participants. Existing module failure guards stay intact.
+        let ready = resetprop().set("sys.boot_completed", "1");
+        let abort = crate::restart_stage::run(&participants, "abort", deadline);
+        return Err(error.context(format!(
+            "restart cancelled before Android stop; ready restoration={ready:?}; participant abort={abort:?}"
+        )));
+    }
 
     let mut waitsys = match Waitsys::spawn() {
         Ok(waitsys) => Some(waitsys),
@@ -218,21 +290,33 @@ pub fn soft_reboot() -> Result<()> {
     terminate_waitsys(&mut waitsys);
 
     info!("post-fs-data");
-    on_post_fs_data()?;
+    // Even if module setup fails, attempt the standard start before returning
+    // the error. Do not leave Android stopped because of a setup error.
+    let setup_result = on_post_fs_data();
+    let prepare_result =
+        setup_result.and_then(|()| crate::restart_stage::run(&participants, "stopped", deadline));
+    if prepare_result.is_err() {
+        // Participants must clear temporary startup substitutions before start.
+        crate::restart_stage::run(&participants, "abort", deadline)?;
+    }
     set_rescue_party_boot_reason();
     info!("start");
     let status = Command::new("start").status().context("start failed")?;
-    if !status.success() {
-        warn!("start exited with status: {status}");
+    ensure!(status.success(), "start exited with status: {status}");
+    prepare_result?;
+    let verified = wait_for_boot_completed(restart_guard.remaining())
+        .and_then(|()| crate::restart_stage::run(&participants, "started", deadline));
+    if let Err(error) = verified {
+        let _ = crate::restart_stage::run(
+            &participants,
+            "abort",
+            Instant::now() + std::time::Duration::from_secs(30),
+        );
+        return Err(error);
     }
-    info!("services");
-    on_services();
-    if let Err(e) = wait_for_boot_completed() {
-        warn!("wait for boot completed failed: {e}");
-    }
-    on_boot_completed();
-
-    unsafe {
-        _exit(0);
-    }
+    crate::restart_stage::ready()?;
+    info!("services: coordinated Android restart and participant verification complete");
+    on_services().context("Android restarted, but module service dispatch failed")?;
+    on_boot_completed().context("Android restarted, but boot-completed dispatch failed")?;
+    Ok(())
 }

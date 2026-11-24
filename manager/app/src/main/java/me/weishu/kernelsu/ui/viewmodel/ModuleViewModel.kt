@@ -43,6 +43,9 @@ import okhttp3.Request
 import java.text.Collator
 import java.util.Locale
 import kotlin.time.Duration.Companion.milliseconds
+import me.weishu.kernelsu.ui.util.applyAllModulesNow as applyAllModulesNowUtil
+import me.weishu.kernelsu.ui.util.applyModuleNow as applyModuleNowUtil
+import me.weishu.kernelsu.ui.util.setLiveApplyPref as setLiveApplyPrefUtil
 import me.weishu.kernelsu.ui.util.toggleModule as toggleModuleUtil
 import me.weishu.kernelsu.ui.util.undoUninstallModule as undoUninstallModuleUtil
 import me.weishu.kernelsu.ui.util.uninstallModule as uninstallModuleUtil
@@ -283,6 +286,8 @@ class ModuleViewModel(
     suspend fun syncModuleUpdateInfo(modules: List<Module>) {
         if (!_uiState.value.checkModuleUpdate) return
 
+        me.weishu.kernelsu.ui.util.module.ModuleSourceRegistry.refresh()
+
         val modulesToFetch = mutableListOf<Triple<String, Module, ModuleUpdateSignature>>()
         val removedIds = mutableSetOf<String>()
 
@@ -295,10 +300,10 @@ class ModuleViewModel(
             }
 
             modules.forEach { module ->
-                val signature = module.toSignature()
-                val cached = updateInfoCache[module.id]
-                if ((cached == null || cached.signature != signature) && updateInfoInFlight.add(module.id)) {
-                    modulesToFetch += Triple(module.id, module, signature)
+                // An explicit list refresh must recheck the remote release even
+                // when local version and checkbox state have not changed.
+                if (updateInfoInFlight.add(module.id)) {
+                    modulesToFetch += Triple(module.id, module, module.toSignature())
                 }
             }
         }
@@ -390,6 +395,64 @@ class ModuleViewModel(
         }
     }
 
+    fun setLiveApplyPref(module: Module, enabled: Boolean) {
+        viewModelScope.launch {
+            val success = withContext(Dispatchers.IO) {
+                setLiveApplyPrefUtil(module.id, enabled)
+            }
+            if (success) {
+                fetchModuleList(checkUpdate = false, resort = false)
+            } else {
+                emitEffect(
+                    ModuleEffect.Toast(
+                        ksuApp.resources.getString(R.string.module_apply_now_pref_failed).format(module.name)
+                    )
+                )
+            }
+        }
+    }
+
+    fun applyAllModulesNow() {
+        viewModelScope.launch {
+            val res = ksuApp.resources
+            emitEffect(ModuleEffect.Toast(res.getString(R.string.module_apply_all_started)))
+            val success = withContext(Dispatchers.IO) {
+                applyAllModulesNowUtil()
+            }
+            fetchModuleList(checkUpdate = false, resort = false)
+            val message = if (success) {
+                R.string.module_apply_all_success
+            } else {
+                R.string.module_apply_all_failed
+            }
+            emitEffect(ModuleEffect.Toast(res.getString(message)))
+        }
+    }
+
+    fun applyModuleNow(module: Module) {
+        viewModelScope.launch {
+            val res = ksuApp.resources
+            emitEffect(ModuleEffect.Toast(res.getString(R.string.module_apply_now_started).format(module.name)))
+            val success = withContext(Dispatchers.IO) {
+                applyModuleNowUtil(module.id)
+            }
+            fetchModuleList(checkUpdate = false, resort = false)
+            if (success) {
+                emitEffect(
+                    ModuleEffect.Toast(
+                        res.getString(R.string.module_apply_now_success).format(module.name)
+                    )
+                )
+            } else {
+                emitEffect(
+                    ModuleEffect.Toast(
+                        res.getString(R.string.module_apply_now_failed).format(module.name, module.id)
+                    )
+                )
+            }
+        }
+    }
+
     fun uninstallModule(module: Module) {
         viewModelScope.launch {
             val res = ksuApp.resources
@@ -473,6 +536,12 @@ class ModuleViewModel(
                     }
                 }
             }
+        }
+
+        if (module.id.startsWith("gxr_")) {
+            changelog = "The current module will be stopped and restored before replacement. " +
+                "The update stays DISABLED. Enable it separately when intended; no automatic restart.\n\n" + changelog
+            html = false
         }
 
         return ModuleConfirmDialogState(

@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.filled.VolunteerActivism
 import androidx.compose.material.icons.rounded.CheckCircleOutline
 import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
@@ -196,7 +197,7 @@ private fun UpdateCard(
     val newVersion = state.latestVersionInfo
     val title = stringResource(id = R.string.module_changelog)
     val updateText = stringResource(id = R.string.module_update)
-    val updateDialog = rememberConfirmDialog(onConfirm = { actions.onOpenUrl(newVersion.downloadUrl) })
+    val updateDialog = rememberConfirmDialog(onConfirm = { actions.onInstallManagerUpdate(newVersion) })
 
     AnimatedVisibility(
         visible = state.hasUpdate,
@@ -204,11 +205,11 @@ private fun UpdateCard(
         exit = shrinkVertically() + fadeOut()
     ) {
         WarningCard(
-            message = stringResource(id = R.string.new_version_available, newVersion.versionCode),
+            message = stringResource(id = R.string.new_version_available, newVersion.versionName.ifEmpty { newVersion.versionCode.toString() }),
             level = WarningLevel.Notice,
             onClick = {
                 if (newVersion.changelog.isEmpty()) {
-                    actions.onOpenUrl(newVersion.downloadUrl)
+                    actions.onInstallManagerUpdate(newVersion)
                 } else {
                     updateDialog.showConfirm(
                         title = title,
@@ -364,6 +365,28 @@ private fun StatusCard(
                                 }
                             }
                         }
+                    }
+                }
+            }
+
+            state.isManagerPrBuild -> {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Card(
+                        modifier = Modifier.weight(1f),
+                        showIndication = false,
+                    ) {
+                        BasicComponent(
+                            title = stringResource(R.string.home_pr_build),
+                            summary = stringResource(R.string.home_pr_build_summary),
+                            startAction = {
+                                Icon(
+                                    Icons.Rounded.Info,
+                                    stringResource(R.string.home_pr_build),
+                                    modifier = Modifier.padding(end = 6.dp),
+                                    tint = colorScheme.onBackground,
+                                )
+                            }
+                        )
                     }
                 }
             }

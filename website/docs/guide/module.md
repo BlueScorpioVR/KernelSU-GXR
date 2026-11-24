@@ -432,6 +432,37 @@ start user apps (autostart)
 
 If you're interested in Android Init Language, it's recommended to read its [documentation](https://android.googlesource.com/platform/system/core/+/master/init/README.md).
 
+## Apply now (without a restart) {#apply-now}
+
+Some modules can be activated against a running Android instead of waiting for
+the next `service` stage. The Manager offers this as an **Apply now** checkbox
+and button on the module card.
+
+This is not inferred from a module's files. Each supported release is audited
+and pinned by `versionCode` in ksud: a module qualifies only when its own
+scripts are start-locked or idempotent, and only the exact audited version is
+enabled by default. After a module update the checkbox appears unchecked until
+that release is audited again.
+
+- **Repeated applies** are safe only for modules with a start lock; the audited
+  path handles that. Do not force-kill an apply: an interrupted patch can leave
+  state that only a restart clears.
+- **One-shot modules** attach to one process incarnation (for example, a
+  SystemUI session). After a successful apply the checkbox disappears until
+  that process is replaced; the Module card says so.
+- **What it cannot do:** modules that must run before the framework starts, that
+  use the restart hooks, or that patch `system_server` or zygote still need a
+  real restart. An already-running app does not see a new module file until it
+  restarts.
+- **Logs:** `/dev/ksu-live-apply/<module-id>.apply.log`.
+
+From a root shell:
+
+```sh
+ksud module live-pref <module-id> on|off
+ksud module live-apply <module-id>
+```
+
 ## Late-load mode {#late-load-mode}
 
 In addition to the standard boot flow described above, KernelSU supports a **late-load mode** for LKM (Loadable Kernel Module) scenarios. In this mode, the KernelSU kernel module is loaded **after the system has fully booted**, rather than during the init process.

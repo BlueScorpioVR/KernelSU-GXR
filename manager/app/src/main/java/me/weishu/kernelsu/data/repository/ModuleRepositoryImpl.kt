@@ -8,6 +8,7 @@ import me.weishu.kernelsu.ksuApp
 import me.weishu.kernelsu.ui.util.isNetworkAvailable
 import me.weishu.kernelsu.ui.util.listModules
 import me.weishu.kernelsu.ui.util.module.sanitizeVersionString
+import me.weishu.kernelsu.ui.util.module.ModuleSourceRegistry
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
@@ -41,9 +42,21 @@ class ModuleRepositoryImpl : ModuleRepository {
                         hasActionScript = obj.optBoolean("action"),
                         metamodule = (obj.optInt("metamodule") != 0) || obj.optBoolean("metamodule"),
                         actionIconPath = obj.optString("actionIcon").takeIf { it.isNotBlank() },
-                        webUiIconPath = obj.optString("webuiIcon").takeIf { it.isNotBlank() }
+                        webUiIconPath = obj.optString("webuiIcon").takeIf { it.isNotBlank() },
+                        liveApply = obj.optString("liveApply").takeIf { it == "live" || it == "once" },
+                        liveApplyDefault = obj.optBoolean("liveApplyDefault", false),
+                        liveApplyEnabled = obj.optBoolean("liveApplyEnabled", false),
+                        liveApplyApplied = obj.optBoolean("liveApplyApplied", false),
+                        liveApplyReason = obj.optString("liveApplyReason").takeIf { it.isNotBlank() },
+                        deprecatedBy = obj.optString("gxrDeprecatedBy").takeIf { Regex("gxr_[A-Za-z0-9_-]+").matches(it) },
+                        replaces = obj.optString("gxrReplaces").split(',').filter { Regex("gxr_[A-Za-z0-9_-]+").matches(it) }.take(16),
                     )
-                }.toList()
+                }.toList().let { modules ->
+                    modules.map { module ->
+                        val replacements = modules.filter { !it.remove && module.id in it.replaces }.map { it.id }
+                        module.copy(deprecatedBy = module.deprecatedBy ?: replacements.singleOrNull())
+                    }
+                }
         }
     }
 
@@ -52,11 +65,12 @@ class ModuleRepositoryImpl : ModuleRepository {
             if (!isNetworkAvailable(ksuApp)) {
                 return@runCatching ModuleUpdateInfo.Empty
             }
-            if (module.updateJson.isEmpty() || module.remove || module.update || !module.enabled) {
+            val feed = module.updateJson.takeIf { it.isNotBlank() } ?: ModuleSourceRegistry.feed(module.id)
+            if (feed == null || module.remove || module.update) {
                 return@runCatching ModuleUpdateInfo.Empty
             }
 
-            val url = module.updateJson
+            val url = feed
             val response = ksuApp.okhttpClient.newCall(
                 Request.Builder().url(url).build()
             ).execute()
@@ -72,6 +86,12 @@ class ModuleRepositoryImpl : ModuleRepository {
             }
 
             val updateJson = JSONObject(result)
+            val deprecatedBy = updateJson.optString("deprecatedBy").takeIf { Regex("gxr_[A-Za-z0-9_-]+").matches(it) }
+            if (deprecatedBy != null) return@runCatching ModuleUpdateInfo.Empty.copy(deprecatedBy = deprecatedBy)
+            if (updateJson.optBoolean("retired")) {
+                val reason = updateJson.optString("retiredReason").filter { it >= ' ' }.trim().take(300)
+                return@runCatching ModuleUpdateInfo.Empty.copy(retiredReason = reason)
+            }
             var version = updateJson.optString("version", "")
             version = sanitizeVersionString(version)
             val versionCode = updateJson.optInt("versionCode", 0)

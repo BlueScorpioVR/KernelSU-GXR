@@ -24,11 +24,15 @@ mod defs;
 #[cfg(target_os = "android")]
 mod feature;
 #[cfg(target_os = "android")]
+mod gxr_update;
+#[cfg(target_os = "android")]
 mod init_event;
 #[cfg(target_os = "android")]
 mod ksucalls;
 #[cfg(target_os = "android")]
 mod late_load;
+#[cfg(any(target_os = "android", test))]
+mod live_apply;
 mod lkm_image;
 mod lkm_image_btf;
 #[cfg(target_os = "android")]
@@ -43,10 +47,12 @@ mod module_config;
 mod profile;
 #[cfg(target_os = "android")]
 mod resetprop;
+mod restart_stage;
 #[cfg(target_os = "android")]
 mod restorecon;
 #[cfg(target_os = "android")]
 mod sepolicy;
+mod service_guard;
 #[cfg(target_os = "android")]
 mod soft_reboot;
 #[cfg(target_os = "android")]

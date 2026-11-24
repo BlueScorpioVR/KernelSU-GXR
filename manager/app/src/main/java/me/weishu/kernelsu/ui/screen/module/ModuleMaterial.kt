@@ -53,6 +53,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Delete
@@ -63,6 +64,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonColors
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CheckableDropdownMenuItem
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenuGroup
 import androidx.compose.material3.DropdownMenuPopup
 import androidx.compose.material3.FilledTonalButton
@@ -165,6 +167,7 @@ fun ModulePagerMaterial(
     val listState = rememberLazyListState()
     val searchListState = rememberLazyListState()
     val refreshTick = remember { mutableIntStateOf(0) }
+    val canApplyAll = uiState.moduleList.any { it.canApplyNow() }
     val threshold = with(LocalDensity.current) { 100.dp.toPx() }
     val fabExpanded by remember {
         var lastIndex = 0
@@ -287,6 +290,14 @@ fun ModulePagerMaterial(
                     }
                 },
                 actions = {
+                    if (canApplyAll) {
+                        IconButton(onClick = actions.onApplyAllModulesNow) {
+                            Icon(
+                                imageVector = Icons.Outlined.Bolt,
+                                contentDescription = stringResource(R.string.module_apply_all)
+                            )
+                        }
+                    }
                     var showDropdown by remember { mutableStateOf(false) }
                     IconButton(
                         onClick = { showDropdown = true }
@@ -505,6 +516,8 @@ private fun ModuleList(
             ModuleItem(
                 module = module,
                 updateUrl = moduleUpdateInfo.downloadUrl,
+                deprecatedBy = moduleUpdateInfo.deprecatedBy ?: module.deprecatedBy,
+                retiredReason = moduleUpdateInfo.retiredReason,
                 onUninstallClicked = {
                     if (module.remove) {
                         actions.onUndoUninstallModule(module)
@@ -529,6 +542,8 @@ private fun ModuleList(
                     }
                 },
                 onExecuteAction = { actions.onExecuteModuleAction(module) },
+                onSetLiveApplyPref = { actions.onSetLiveApplyPref(module, it) },
+                onApplyNow = { actions.onApplyModuleNow(module) },
                 closeSearch = { closeSearch() }
             )
         }
@@ -694,15 +709,20 @@ private fun ModuleShortcutSheet(
 private fun ModuleItem(
     module: Module,
     updateUrl: String,
+    deprecatedBy: String?,
+    retiredReason: String?,
     onUninstallClicked: () -> Unit,
     onCheckChanged: (Boolean) -> Unit,
     onUpdate: () -> Unit,
     onAddShortcut: (ShortcutType) -> Unit,
     onOpenWebUi: () -> Unit,
     onExecuteAction: () -> Unit,
+    onSetLiveApplyPref: (Boolean) -> Unit,
+    onApplyNow: () -> Unit,
     closeSearch: () -> Unit
 ) {
-    val hasDescription = module.description.isNotBlank()
+    val displayDescription = if (deprecatedBy != null) stringResource(R.string.gxr_module_obsolete, deprecatedBy) + "\n\n${module.description}" else module.description
+    val hasDescription = displayDescription.isNotBlank()
     val maxLinesLimit = LocalModuleDescriptionMaxLines.current
     var expanded by rememberSaveable(module.id) { mutableStateOf(false) }
     val canOpenWebUi = module.hasWebUi && !module.remove && module.enabled
@@ -781,7 +801,7 @@ private fun ModuleItem(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 ExpandableDescriptionText(
-                    text = module.description,
+                    text = displayDescription,
                     expanded = expanded,
                     maxLinesLimit = maxLinesLimit,
                     modifier = Modifier
@@ -802,6 +822,50 @@ private fun ModuleItem(
                 )
             }
 
+            if (module.liveApply != null && !module.liveApplyApplied) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = module.liveApplyEnabled,
+                        onCheckedChange = {
+                            haptic.performHapticFeedback(HapticFeedbackType.VirtualKey)
+                            onSetLiveApplyPref(it)
+                        },
+                        enabled = !module.remove && !module.update,
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.module_apply_now),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        module.liveApplyReason?.let { reason ->
+                            Text(
+                                text = reason,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (!module.enabled) {
+                            Text(
+                                text = stringResource(R.string.module_apply_now_enable_first),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            } else if (module.liveApplyApplied) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.module_apply_now_applied),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+
             Row(modifier = Modifier.padding(vertical = 4.dp)) {
                 if (module.metamodule) {
                     StatusTag(
@@ -810,6 +874,41 @@ private fun ModuleItem(
                         contentColor = MaterialTheme.colorScheme.onPrimary,
                         backgroundColor = MaterialTheme.colorScheme.primary
                     )
+                }
+            }
+
+            if (retiredReason != null && !module.remove) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.errorContainer)
+                        .padding(12.dp, 10.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.gxr_module_retired_title),
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = retiredReason.ifBlank { stringResource(R.string.gxr_module_retired_default) },
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Button(
+                        modifier = Modifier
+                            .align(Alignment.End)
+                            .padding(top = 6.dp),
+                        onClick = onUninstallClicked,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError,
+                        ),
+                    ) {
+                        Text(stringResource(R.string.gxr_module_retired_remove))
+                    }
                 }
             }
 
@@ -822,7 +921,8 @@ private fun ModuleItem(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 val hasUpdate = updateUrl.isNotEmpty()
-                val actionButtonsEnabled = !module.remove && module.enabled
+                val actionButtonsEnabled = !module.remove && !module.update &&
+                    (module.enabled || module.id.startsWith("gxr_"))
 
                 AnimatedVisibility(
                     visible = actionButtonsEnabled,
@@ -861,7 +961,36 @@ private fun ModuleItem(
                             }
                         }
 
-                        if (module.hasWebUi) {
+                        if (module.canApplyNow()) {
+                            CombinedClickableButton(
+                                onClick = {
+                                    onApplyNow()
+                                    closeSearch()
+                                },
+                                onLongClick = {},
+                                modifier = Modifier.defaultMinSize(52.dp, 32.dp),
+                                shape = ButtonDefaults.filledTonalShape,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                                ),
+                                contentPadding = ButtonDefaults.TextButtonContentPadding
+                            ) {
+                                Icon(
+                                    modifier = Modifier.size(20.dp),
+                                    imageVector = Icons.Outlined.Bolt,
+                                    contentDescription = null
+                                )
+                                Text(
+                                    modifier = Modifier.padding(start = 7.dp),
+                                    text = stringResource(R.string.module_apply_now_short),
+                                    fontFamily = MaterialTheme.typography.labelMedium.fontFamily,
+                                    fontSize = MaterialTheme.typography.labelMedium.fontSize
+                                )
+                            }
+                        }
+
+                        if (module.hasWebUi && module.enabled) {
                             CombinedClickableButton(
                                 onClick = {
                                     onOpenWebUi()

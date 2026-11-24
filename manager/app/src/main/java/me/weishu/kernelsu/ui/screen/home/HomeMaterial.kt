@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.filled.VolunteerActivism
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -159,13 +160,13 @@ private fun UpdateCard(
         enter = fadeIn() + expandVertically(),
         exit = shrinkVertically() + fadeOut()
     ) {
-        val updateDialog = rememberConfirmDialog(onConfirm = { actions.onOpenUrl(newVersion.downloadUrl) })
+        val updateDialog = rememberConfirmDialog(onConfirm = { actions.onInstallManagerUpdate(newVersion) })
         WarningCard(
-            message = stringResource(id = R.string.new_version_available, newVersion.versionCode),
+            message = stringResource(id = R.string.new_version_available, newVersion.versionName.ifEmpty { newVersion.versionCode.toString() }),
             level = WarningLevel.Notice
         ) {
             if (newVersion.changelog.isEmpty()) {
-                actions.onOpenUrl(newVersion.downloadUrl)
+                actions.onInstallManagerUpdate(newVersion)
             } else {
                 updateDialog.showConfirm(
                     title = title,
@@ -198,9 +199,10 @@ private fun StatusCard(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
         val ksuActive = state.ksuVersion != null
-        val notInstalled = !ksuActive && state.kernelVersion.isGKI()
+        val prBuild = state.isManagerPrBuild && !state.isManager
+        val notInstalled = !ksuActive && !prBuild && state.kernelVersion.isGKI()
 
-        val containerColor = if (ksuActive) {
+        val containerColor = if (ksuActive || prBuild) {
             MaterialTheme.colorScheme.secondaryContainer
         } else {
             MaterialTheme.colorScheme.errorContainer
@@ -208,16 +210,19 @@ private fun StatusCard(
         val contentColor = MaterialTheme.colorScheme.contentColorFor(containerColor)
 
         val statusIcon = when {
+            prBuild -> Icons.Rounded.Info
             ksuActive -> Icons.Rounded.CheckCircle
             notInstalled -> Icons.Rounded.Warning
             else -> Icons.Rounded.Block
         }
         val statusTitle = when {
+            prBuild -> stringResource(R.string.home_pr_build)
             ksuActive -> stringResource(R.string.home_working)
             notInstalled -> stringResource(R.string.home_not_installed)
             else -> stringResource(R.string.home_unsupported)
         }
         val statusSummary = when {
+            prBuild -> stringResource(R.string.home_pr_build_summary)
             ksuActive -> stringResource(R.string.home_working_version, "${state.ksuVersion}-${state.kernelUAPIVersion}")
             notInstalled -> stringResource(R.string.home_click_to_install)
             else -> stringResource(R.string.home_unsupported_reason)
@@ -258,7 +263,7 @@ private fun StatusCard(
             contentColor = contentColor,
             shape = MaterialTheme.shapes.large,
             onClick = {
-                if (!state.isLateLoadMode) {
+                if (!state.isLateLoadMode && !prBuild) {
                     actions.onInstallClick()
                 }
             }

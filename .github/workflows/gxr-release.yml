@@ -1,0 +1,120 @@
+name: KernelSU GXR release
+
+on:
+  push:
+    tags: ['gxr-*']
+  workflow_dispatch:
+    inputs:
+      build_version:
+        description: 'Optional gxr-* version for an artifact-only build; does not publish'
+        type: string
+        default: ''
+      release_tag:
+        description: 'Optional new gxr-* tag to build and publish; empty builds artifacts only'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gxr-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == '4uva4ek/KernelSU-GXR'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require GXR source
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          git merge-base --is-ancestor 10aa21cbb6a2b05d7792f60cde76565b99d89a63 HEAD
+          test -f scripts/build-gxr.sh
+          if [[ -n "$RELEASE_TAG" ]]; then
+            [[ "$RELEASE_TAG" =~ ^gxr-[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || exit 1
+            if git rev-parse --verify "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+              echo 'Release tag already exists; use a new version.' >&2
+              exit 1
+            fi
+          fi
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Set up Android SDK command-line tools
+        uses: android-actions/setup-android@v4
+        with:
+          packages: ''
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libclang-dev llvm-dev pkg-config
+          rustup toolchain install 1.99.0 --profile minimal --target aarch64-linux-android
+          rustup default 1.99.0
+          sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;29.0.14206865' 'cmake;3.22.1'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
+      - name: Build and verify GXR with retained signing identity
+        env:
+          GXR_VERSION_NAME: ${{ inputs.release_tag || (startsWith(github.ref, 'refs/tags/gxr-') && github.ref_name) || inputs.build_version || '' }}
+          GXR_KEYSTORE_BASE64: ${{ secrets.GXR_KEYSTORE_BASE64 }}
+          GXR_STORE_PASS: ${{ secrets.GXR_STORE_PASS }}
+          GXR_KEY_PASS: ${{ secrets.GXR_KEY_PASS }}
+          GXR_KEY_ALIAS: ${{ secrets.GXR_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          : "${GXR_KEYSTORE_BASE64:?Missing GXR signing secrets}"
+          export GXR_KEYSTORE="$RUNNER_TEMP/gxr.jks"
+          trap 'rm -f -- "$GXR_KEYSTORE"' EXIT
+          umask 077
+          printf '%s' "$GXR_KEYSTORE_BASE64" | base64 --decode > "$GXR_KEYSTORE"
+          bash scripts/build-gxr.sh
+          cp TESTED.md out/gxr/TESTED.md
+          printf 'Source: %s\nRef: %s\nBuild: %s/%s/actions/runs/%s\nProfile: SM-I610, android12-5.10, KDP=y, DEFEX=n, RKP_NO_PATCH_TEXT=y, SCS=y, CFI=y\nSigning: APK v2 only\n' "$GITHUB_SHA" "$GITHUB_REF" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > out/gxr/BUILD-INFO.txt
+      - name: Verify module source catalogue parsing
+        working-directory: manager
+        run: bash gradlew testDebugUnitTest --tests me.weishu.kernelsu.ui.util.module.GitHubModuleSourceTest -Pandroid.injected.build.abi=arm64-v8a
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KernelSU-GXR-${{ github.sha }}
+          path: out/gxr/
+          if-no-files-found: error
+          retention-days: 30
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/gxr-') || inputs.release_tag != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: KernelSU-GXR-${{ github.sha }}
+          path: dist
+      - name: Publish GXR release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          # A tag push can race with a release published outside this workflow.
+          # Listing must succeed: API/auth failures must not look like a missing release.
+          release_tags=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[].tag_name')
+          if grep -Fxq -- "$RELEASE_TAG" <<< "$release_tags"; then
+            echo "::notice::Release $RELEASE_TAG already exists; publication skipped. Build artifacts are retained."
+            printf 'Release `%s` already exists. Publication skipped; existing assets are unchanged. The build artifact is available in this run.\n' "$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/gxr-* ]]; then
+            tag_args=(--verify-tag)
+          else
+            tag_args=(--target "$GITHUB_SHA")
+          fi
+          gh release create "$RELEASE_TAG" dist/* "${tag_args[@]}" --title "KernelSU GXR $RELEASE_TAG" --notes-file dist/TESTED.md

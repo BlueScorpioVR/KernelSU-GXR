@@ -160,7 +160,7 @@ pub fn foreach_module(
     Ok(())
 }
 
-fn foreach_active_module(f: impl FnMut(&Path) -> Result<()>) -> Result<()> {
+pub fn foreach_active_module(f: impl FnMut(&Path) -> Result<()>) -> Result<()> {
     foreach_module(Active, f)
 }
 
@@ -271,6 +271,16 @@ impl Drop for SigchldBlock {
 }
 
 pub fn exec_script<T: AsRef<Path>>(path: T, wait: ScriptWait) -> Result<()> {
+    let stage = path.as_ref().file_name().and_then(|s| s.to_str());
+    if matches!(wait, ScriptWait::NoWait)
+        && matches!(stage, Some("service.sh" | "boot-completed.sh"))
+    {
+        return crate::restart_stage::launch(path.as_ref());
+    }
+    exec_script_direct(path, wait)
+}
+
+pub fn exec_script_direct<T: AsRef<Path>>(path: T, wait: ScriptWait) -> Result<()> {
     info!("exec {}", path.as_ref().display());
 
     let is_module_script = path.as_ref().starts_with(defs::MODULE_DIR);
@@ -337,7 +347,13 @@ pub fn exec_script<T: AsRef<Path>>(path: T, wait: ScriptWait) -> Result<()> {
 
     let result = match wait {
         ScriptWait::NoWait => command.spawn().map(|_| ()),
-        ScriptWait::Forever => command.status().map(|_| ()),
+        ScriptWait::Forever => command.status().and_then(|s| {
+            if s.success() {
+                Ok(())
+            } else {
+                Err(std::io::Error::other(format!("script exited {s}")))
+            }
+        }),
         ScriptWait::Until(deadline) => command.spawn().and_then(|child| {
             // Once the shared deadline has passed, launch later scripts without waiting.
             if deadline > Instant::now()
@@ -379,8 +395,8 @@ pub fn exec_common_scripts(dir: &str, wait: ScriptWait) -> Result<()> {
         return Ok(());
     }
 
-    let dir = std::fs::read_dir(&script_dir)?;
-    for entry in dir.flatten() {
+    let entries = std::fs::read_dir(&script_dir)?;
+    for entry in entries.flatten() {
         let path = entry.path();
 
         if !is_executable(&path) {
@@ -388,7 +404,11 @@ pub fn exec_common_scripts(dir: &str, wait: ScriptWait) -> Result<()> {
             continue;
         }
 
-        exec_script(path, wait)?;
+        if matches!(wait, ScriptWait::NoWait) && matches!(dir, "service.d" | "boot-completed.d") {
+            crate::restart_stage::launch(&path)?;
+        } else {
+            exec_script(path, wait)?;
+        }
     }
 
     Ok(())
@@ -769,8 +789,22 @@ fn install_module_to_system(zip: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn install_module(zip: &str) -> Result<()> {
+pub fn install_module(
+    zip: &str,
+    replacements: &[String],
+    disable_conflicts: &[String],
+) -> Result<()> {
     ksucalls::ensure_uapi_version_matched()?;
+
+    // The reviewed GXR path never runs installer.sh or regenerates preinit.
+    if crate::gxr_update::try_install(zip, replacements, disable_conflicts)? {
+        return Ok(());
+    }
+
+    ensure!(
+        replacements.is_empty() && disable_conflicts.is_empty(),
+        "Dependency consent is only supported for GXR packages"
+    );
 
     let result = install_module_to_system(zip);
     if let Err(ref e) = result {
@@ -804,6 +838,7 @@ pub fn undo_uninstall_module(id: &str) -> Result<()> {
 
 pub fn uninstall_module(id: &str) -> Result<()> {
     validate_module_id(id)?;
+    crate::gxr_update::prepare_uninstall(id)?;
 
     let module_path = Path::new(defs::MODULE_DIR).join(id);
     ensure!(module_path.exists(), "Module {id} not found");
@@ -831,6 +866,7 @@ pub fn run_action(id: &str) -> Result<()> {
 
 pub fn enable_module(id: &str) -> Result<()> {
     validate_module_id(id)?;
+    crate::gxr_update::ensure_not_superseded(id, Path::new(defs::MODULE_DIR))?;
 
     let module_path = Path::new(defs::MODULE_DIR).join(id);
     ensure!(module_path.exists(), "Module {id} not found");
@@ -1027,6 +1063,23 @@ fn list_module(path: &str) -> Vec<HashMap<String, String>> {
         module_prop_map.insert("web".to_owned(), web.to_string());
         module_prop_map.insert("action".to_owned(), action.to_string());
         module_prop_map.insert("mount".to_owned(), need_mount.to_string());
+
+        // Audited live-apply capability. Unaudited modules simply omit the fields.
+        let live = crate::live_apply::state_for(
+            module_prop_map.get("id").map_or("", String::as_str),
+            module_prop_map
+                .get("versionCode")
+                .and_then(|value| value.trim().parse::<u64>().ok())
+                .unwrap_or(0),
+            &path,
+        );
+        if let Some(live) = live {
+            module_prop_map.insert("liveApply".to_owned(), live.mode.as_str().to_owned());
+            module_prop_map.insert("liveApplyReason".to_owned(), live.reason);
+            module_prop_map.insert("liveApplyDefault".to_owned(), live.default.to_string());
+            module_prop_map.insert("liveApplyEnabled".to_owned(), live.enabled.to_string());
+            module_prop_map.insert("liveApplyApplied".to_owned(), live.applied.to_string());
+        }
 
         resolve_module_icon_path(&mut module_prop_map, "actionIcon", &path);
         resolve_module_icon_path(&mut module_prop_map, "webuiIcon", &path);

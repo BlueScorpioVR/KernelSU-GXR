@@ -732,8 +732,9 @@ pub fn patch(args: BootPatchArgs) -> Result<()> {
             .entry_by_name("ksu_config")
             .and_then(CpioEntry::data)
             .and_then(|v| str::from_utf8(v).ok())
-            .map(|v| v.split(' ').map(std::borrow::ToOwned::to_owned).collect())
-            .unwrap_or_default();
+            .map_or_else(Vec::new, |v| {
+                v.split(' ').map(std::borrow::ToOwned::to_owned).collect()
+            });
 
         let mut apply_config = |name: &str, value: &str, add: bool| {
             let has_value = ksu_config.iter().any(|v| v == value);

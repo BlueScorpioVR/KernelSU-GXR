@@ -18,8 +18,15 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
+import me.weishu.kernelsu.data.model.Module
 import me.weishu.kernelsu.ui.util.module.Shortcut
 import kotlin.math.roundToInt
+
+/** True when this module can be applied right now without a restart. */
+fun Module.canApplyNow(): Boolean {
+    return liveApply != null && liveApplyEnabled && !liveApplyApplied &&
+        enabled && !update && !remove
+}
 
 enum class ShortcutType {
     Action,

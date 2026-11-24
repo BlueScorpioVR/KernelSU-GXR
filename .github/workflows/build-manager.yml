@@ -46,49 +46,74 @@ jobs:
       keystore: ${{ steps.gen.outputs.keystore }}
       keystore_password: ${{ steps.gen.outputs.keystore_password }}
       key_password: ${{ steps.gen.outputs.key_password }}
+      key_alias: ${{ steps.gen.outputs.key_alias }}
     steps:
-      - name: Generate temporary keystore
-        if: github.event_name == 'pull_request'
+      - name: Prepare signing key
         id: gen
+        env:
+          STABLE_KEYSTORE: ${{ secrets.KEYSTORE }}
+          STABLE_STORE_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          STABLE_KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+          STABLE_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
-          KEYSTORE_PASSWORD=$(openssl rand -hex 32)
-          KEY_PASSWORD=$(openssl rand -hex 32)
-          echo "keystore_password=$KEYSTORE_PASSWORD" >> $GITHUB_OUTPUT
-          echo "key_password=$KEY_PASSWORD" >> $GITHUB_OUTPUT
-
-          keytool -genkeypair \
-            -alias pr-key \
-            -keyalg RSA -keysize 2048 \
-            -validity 1 \
-            -storepass "$KEYSTORE_PASSWORD" \
-            -keypass "$KEY_PASSWORD" \
-            -dname "CN=KernelSU PR Build" \
-            -storetype JKS \
-            -keystore pr-key.jks
-
-          echo "keystore=$(base64 -w 0 pr-key.jks)" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          if [ -n "${STABLE_KEYSTORE:-}" ]; then
+            # A repository-level key keeps PR builds updatable in place. Do not
+            # echo it: GitHub withholds job outputs that contain a stored secret.
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            # Fork PRs have no secrets: fall back to a throwaway key.
+            KEYSTORE_PASSWORD=$(openssl rand -hex 32)
+            KEY_PASSWORD=$(openssl rand -hex 32)
+            keytool -genkeypair \
+              -alias pr-key \
+              -keyalg RSA -keysize 2048 \
+              -validity 1 \
+              -storepass "$KEYSTORE_PASSWORD" \
+              -keypass "$KEY_PASSWORD" \
+              -dname "CN=KernelSU PR Build" \
+              -storetype JKS \
+              -keystore key.jks
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+            echo "keystore=$(base64 -w 0 key.jks)" >> "$GITHUB_OUTPUT"
+            echo "keystore_password=$KEYSTORE_PASSWORD" >> "$GITHUB_OUTPUT"
+            echo "key_password=$KEY_PASSWORD" >> "$GITHUB_OUTPUT"
+            echo "key_alias=pr-key" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Extract certificate hash and size
-        if: github.event_name == 'pull_request'
         id: extract
+        if: steps.gen.outputs.has_key == 'true'
         env:
-          STORE_PASS: ${{ steps.gen.outputs.keystore_password }}
+          STABLE_KEYSTORE: ${{ secrets.KEYSTORE }}
+          STABLE_STORE_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          STABLE_ALIAS: ${{ secrets.KEY_ALIAS }}
+          TEMP_KEYSTORE: ${{ steps.gen.outputs.keystore }}
+          TEMP_STORE_PASS: ${{ steps.gen.outputs.keystore_password }}
+          TEMP_ALIAS: ${{ steps.gen.outputs.key_alias }}
         run: |
-          # Export DER certificate
+          set -euo pipefail
+          if [ -n "${STABLE_KEYSTORE:-}" ]; then
+            printf '%s' "$STABLE_KEYSTORE" | base64 --decode > key.jks
+            STORE_PASS="$STABLE_STORE_PASS"
+            KEY_ALIAS="$STABLE_ALIAS"
+          else
+            printf '%s' "$TEMP_KEYSTORE" | base64 --decode > key.jks
+            STORE_PASS="$TEMP_STORE_PASS"
+            KEY_ALIAS="$TEMP_ALIAS"
+          fi
           keytool -exportcert \
-            -alias pr-key \
-            -keystore pr-key.jks \
+            -alias "$KEY_ALIAS" \
+            -keystore key.jks \
             -storepass "$STORE_PASS" \
-            -file pr-cert.der
+            -file cert.der
 
-          # Calculate size in hex
-          SIZE_DEC=$(stat -c%s pr-cert.der)
+          SIZE_DEC=$(stat -c%s cert.der)
           SIZE_HEX=$(printf '0x%04x' "$SIZE_DEC")
-          echo "expected_size=$SIZE_HEX" >> $GITHUB_OUTPUT
+          echo "expected_size=$SIZE_HEX" >> "$GITHUB_OUTPUT"
 
-          # Calculate SHA256 hash
-          HASH=$(sha256sum pr-cert.der | awk '{print $1}')
-          echo "expected_hash=$HASH" >> $GITHUB_OUTPUT
+          HASH=$(sha256sum cert.der | awk '{print $1}')
+          echo "expected_hash=$HASH" >> "$GITHUB_OUTPUT"
 
           echo "Certificate size: $SIZE_HEX ($SIZE_DEC bytes)"
           echo "Certificate hash: $HASH"
@@ -142,15 +167,31 @@ jobs:
       - name: Write PR key
         if: github.event_name == 'pull_request'
         env:
-          PR_KEYSTORE: ${{ needs.generate-key.outputs.keystore }}
-          PR_KEYSTORE_PASSWORD: ${{ needs.generate-key.outputs.keystore_password }}
-          PR_KEY_PASSWORD: ${{ needs.generate-key.outputs.key_password }}
+          STABLE_KEYSTORE: ${{ secrets.KEYSTORE }}
+          STABLE_STORE_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          STABLE_KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+          STABLE_ALIAS: ${{ secrets.KEY_ALIAS }}
+          TEMP_KEYSTORE: ${{ needs.generate-key.outputs.keystore }}
+          TEMP_STORE_PASS: ${{ needs.generate-key.outputs.keystore_password }}
+          TEMP_KEY_PASS: ${{ needs.generate-key.outputs.key_password }}
+          TEMP_ALIAS: ${{ needs.generate-key.outputs.key_alias }}
         run: |
-          echo "$PR_KEYSTORE" | base64 -d > pr-key.jks
+          set -euo pipefail
+          if [ -n "${STABLE_KEYSTORE:-}" ]; then
+            printf '%s' "$STABLE_KEYSTORE" | base64 --decode > pr-key.jks
+            STORE_PASS="$STABLE_STORE_PASS"
+            KEY_PASS="$STABLE_KEY_PASS"
+            ALIAS="$STABLE_ALIAS"
+          else
+            printf '%s' "$TEMP_KEYSTORE" | base64 --decode > pr-key.jks
+            STORE_PASS="$TEMP_STORE_PASS"
+            KEY_PASS="$TEMP_KEY_PASS"
+            ALIAS="$TEMP_ALIAS"
+          fi
           {
-            echo KEYSTORE_PASSWORD="$PR_KEYSTORE_PASSWORD"
-            echo KEY_ALIAS='pr-key'
-            echo KEY_PASSWORD="$PR_KEY_PASSWORD"
+            echo KEYSTORE_PASSWORD="$STORE_PASS"
+            echo KEY_ALIAS="$ALIAS"
+            echo KEY_PASSWORD="$KEY_PASS"
             echo KEYSTORE_FILE='pr-key.jks'
           } >> gradle.properties
 
@@ -240,19 +281,21 @@ jobs:
           PROD_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           PROD_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "$PR_KEYSTORE" | base64 -d > pr-key.jks
+          if [ -n "${PROD_KEYSTORE:-}" ]; then
+            printf '%s' "$PROD_KEYSTORE" | base64 --decode > key.jks
+            echo "SIGN_KEYSTORE_FILE=key.jks" >> $GITHUB_ENV
+            echo "SIGN_KEY_ALIAS=$PROD_KEY_ALIAS" >> $GITHUB_ENV
+            echo "SIGN_KEYSTORE_PASSWORD=$PROD_KEYSTORE_PASSWORD" >> $GITHUB_ENV
+            echo "SIGN_KEY_PASSWORD=$PROD_KEY_PASSWORD" >> $GITHUB_ENV
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            printf '%s' "$PR_KEYSTORE" | base64 --decode > pr-key.jks
             echo "SIGN_KEYSTORE_FILE=pr-key.jks" >> $GITHUB_ENV
             echo "SIGN_KEY_ALIAS=pr-key" >> $GITHUB_ENV
             echo "SIGN_KEYSTORE_PASSWORD=$PR_KEYSTORE_PASSWORD" >> $GITHUB_ENV
             echo "SIGN_KEY_PASSWORD=$PR_KEY_PASSWORD" >> $GITHUB_ENV
           else
-            test -n "$PROD_KEYSTORE"
-            echo "$PROD_KEYSTORE" | base64 -d > key.jks
-            echo "SIGN_KEYSTORE_FILE=key.jks" >> $GITHUB_ENV
-            echo "SIGN_KEY_ALIAS=$PROD_KEY_ALIAS" >> $GITHUB_ENV
-            echo "SIGN_KEYSTORE_PASSWORD=$PROD_KEYSTORE_PASSWORD" >> $GITHUB_ENV
-            echo "SIGN_KEY_PASSWORD=$PROD_KEY_PASSWORD" >> $GITHUB_ENV
+            echo '::error::No signing key available for this build'
+            exit 1
           fi
 
       - name: Repack and resign
