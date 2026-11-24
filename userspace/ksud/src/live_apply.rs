@@ -175,7 +175,7 @@ pub const fn default_enabled(entry: &Audit, installed_version_code: u64) -> bool
 }
 
 #[cfg(target_os = "android")]
-pub use runtime::{apply, set_pref, state_for};
+pub use runtime::{apply, apply_all, set_pref, state_for};
 
 #[cfg(target_os = "android")]
 mod runtime {
@@ -488,36 +488,21 @@ mod runtime {
         Ok(())
     }
 
-    /// Activate one module against the running system.
-    pub fn apply(id: &str) -> Result<()> {
-        module::validate_module_id(id)?;
-        let entry = lookup(id).context("This module does not support Apply now")?;
-        let installed = installed_version_code(id)?;
-        let module_path = Path::new(defs::MODULE_DIR).join(id);
-        ensure!(module_path.is_dir(), "Module {id} is not installed");
-
-        // Serialize with installs and with the coordinated soft restart: a
-        // restart must not begin while an apply is in flight.
-        let _control = crate::gxr_update::control_lock()?;
-        let _lock = lock()?;
-
-        let default = default_enabled(entry, installed);
-        let enabled = read_pref(id).unwrap_or(default);
-        ensure!(enabled, "Apply now is turned off for this module");
-        ensure!(
-            !module_is_disabled(&module_path),
-            "Enable the module first, then apply it"
-        );
-        ensure!(
-            !module_path.join(defs::UPDATE_FILE_NAME).exists(),
-            "Finish the pending module update first"
-        );
-        ensure!(!restart_stage::blocked(), "A soft restart is in progress");
-
-        if entry.mode == Mode::Once && (once_applied(entry) || probe(entry, &module_path)) {
-            bail!("This module is already applied; restart Android to apply it again");
+    /// Why a module cannot be applied right now.
+    fn skip_reason(entry: &Audit, module_path: &Path) -> Option<&'static str> {
+        if module_is_disabled(module_path) {
+            Some("Enable the module first, then apply it")
+        } else if module_path.join(defs::UPDATE_FILE_NAME).exists() {
+            Some("Finish the pending module update first")
+        } else if entry.mode == Mode::Once && (once_applied(entry) || probe(entry, module_path)) {
+            Some("This module is already applied; restart Android to apply it again")
+        } else {
+            None
         }
+    }
 
+    /// Apply one eligible module. The caller holds both locks.
+    fn run(entry: &Audit, module_path: &Path, id: &str) -> Result<()> {
         // A one-shot patch is only meaningful against a live target; record its
         // identity so a later restart or app replacement invalidates the apply.
         let target_before = entry
@@ -531,10 +516,10 @@ mod runtime {
         let began = Instant::now();
         let log_name = format!("{id}.apply");
         let output = if entry.background {
-            start_background(&module_path, id, &log_name, entry.apply)?
+            start_background(module_path, id, &log_name, entry.apply)?
         } else {
             let (status, output) =
-                run_script(&module_path, id, &log_name, entry.apply, APPLY_TIMEOUT)?;
+                run_script(module_path, id, &log_name, entry.apply, APPLY_TIMEOUT)?;
             ensure!(status.success(), "Apply failed (exit status {status})");
             output
         };
@@ -542,13 +527,13 @@ mod runtime {
             print!("{output}");
         }
         ensure!(
-            !module_is_disabled(&module_path),
+            !module_is_disabled(module_path),
             "The module disabled itself while applying; inspect its log"
         );
 
         if entry.status.is_some() {
             ensure!(
-                wait_probe(entry, &module_path, STATUS_TIMEOUT),
+                wait_probe(entry, module_path, STATUS_TIMEOUT),
                 "Apply reported success but the module is not active"
             );
         }
@@ -567,6 +552,78 @@ mod runtime {
             entry.mode.as_str(),
             began.elapsed().as_millis()
         );
+        Ok(())
+    }
+
+    /// Activate one module against the running system.
+    pub fn apply(id: &str) -> Result<()> {
+        module::validate_module_id(id)?;
+        let entry = lookup(id).context("This module does not support Apply now")?;
+        let installed = installed_version_code(id)?;
+        let module_path = Path::new(defs::MODULE_DIR).join(id);
+        ensure!(module_path.is_dir(), "Module {id} is not installed");
+
+        // Serialize with installs and with the coordinated soft restart: a
+        // restart must not begin while an apply is in flight.
+        let _control = crate::gxr_update::control_lock()?;
+        let _lock = lock()?;
+
+        ensure!(!restart_stage::blocked(), "A soft restart is in progress");
+        ensure!(
+            read_pref(id).unwrap_or(default_enabled(entry, installed)),
+            "Apply now is turned off for this module"
+        );
+        if let Some(reason) = skip_reason(entry, &module_path) {
+            bail!("{reason}");
+        }
+        run(entry, &module_path, id)
+    }
+
+    /// Apply every checked module, continuing after individual failures.
+    pub fn apply_all() -> Result<()> {
+        let _control = crate::gxr_update::control_lock()?;
+        let _lock = lock()?;
+        ensure!(!restart_stage::blocked(), "A soft restart is in progress");
+
+        let mut applied = 0_usize;
+        let mut skipped = 0_usize;
+        let mut failed = 0_usize;
+
+        module::foreach_module(module::ModuleType::All, |module_path| {
+            let Some(id) = module_path.file_name().and_then(|name| name.to_str()) else {
+                return Ok(());
+            };
+            let Some(entry) = lookup(id) else {
+                return Ok(());
+            };
+            let installed = module::read_module_prop(module_path)
+                .ok()
+                .and_then(|props| props.get("versionCode").cloned())
+                .and_then(|value| value.trim().parse::<u64>().ok())
+                .unwrap_or(0);
+            if !read_pref(id).unwrap_or(default_enabled(entry, installed)) {
+                skipped += 1;
+                return Ok(());
+            }
+            if let Some(reason) = skip_reason(entry, module_path) {
+                println!("GXR_LIVE_APPLY=SKIP id={id} reason=\"{reason}\"");
+                skipped += 1;
+                return Ok(());
+            }
+            match run(entry, module_path, id) {
+                Ok(()) => applied += 1,
+                Err(error) => {
+                    failed += 1;
+                    eprintln!("GXR_LIVE_APPLY=FAIL id={id} error={error:#}");
+                }
+            }
+            Ok(())
+        })?;
+
+        println!("GXR_LIVE_APPLY=SUMMARY applied={applied} skipped={skipped} failed={failed}");
+        if failed > 0 {
+            bail!("{failed} module(s) failed to apply; see /dev/ksu-live-apply/");
+        }
         Ok(())
     }
 

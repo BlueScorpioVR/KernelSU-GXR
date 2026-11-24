@@ -167,6 +167,7 @@ fun ModulePagerMaterial(
     val listState = rememberLazyListState()
     val searchListState = rememberLazyListState()
     val refreshTick = remember { mutableIntStateOf(0) }
+    val canApplyAll = uiState.moduleList.any { it.canApplyNow() }
     val threshold = with(LocalDensity.current) { 100.dp.toPx() }
     val fabExpanded by remember {
         var lastIndex = 0
@@ -289,6 +290,14 @@ fun ModulePagerMaterial(
                     }
                 },
                 actions = {
+                    if (canApplyAll) {
+                        IconButton(onClick = actions.onApplyAllModulesNow) {
+                            Icon(
+                                imageVector = Icons.Outlined.Bolt,
+                                contentDescription = stringResource(R.string.module_apply_all)
+                            )
+                        }
+                    }
                     var showDropdown by remember { mutableStateOf(false) }
                     IconButton(
                         onClick = { showDropdown = true }
@@ -839,6 +848,13 @@ private fun ModuleItem(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                        if (!module.enabled) {
+                            Text(
+                                text = stringResource(R.string.module_apply_now_enable_first),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             } else if (module.liveApplyApplied) {
@@ -945,9 +961,7 @@ private fun ModuleItem(
                             }
                         }
 
-                        if (module.liveApplyEnabled && module.liveApply != null &&
-                            !module.liveApplyApplied && module.enabled
-                        ) {
+                        if (module.canApplyNow()) {
                             CombinedClickableButton(
                                 onClick = {
                                     onApplyNow()

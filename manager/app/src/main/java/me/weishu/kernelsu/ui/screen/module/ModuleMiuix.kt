@@ -168,6 +168,7 @@ fun ModulePagerMiuix(
 ) {
     val modules = uiState.moduleList
     val searchStatus = uiState.searchStatus
+    val canApplyAll = modules.any { it.canApplyNow() }
 
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -268,6 +269,15 @@ fun ModulePagerMiuix(
                         color = barColor,
                         title = stringResource(R.string.module),
                         actions = {
+                            if (canApplyAll) {
+                                IconButton(onClick = actions.onApplyAllModulesNow) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Bolt,
+                                        tint = colorScheme.onSurface,
+                                        contentDescription = stringResource(R.string.module_apply_all)
+                                    )
+                                }
+                            }
                             Box {
                                 val showTopPopup = remember { mutableStateOf(false) }
                                 IconButton(
@@ -957,6 +967,14 @@ fun ModuleItem(
                             color = colorScheme.onSurfaceVariantSummary,
                         )
                     }
+                    if (!module.enabled) {
+                        Text(
+                            text = stringResource(R.string.module_apply_now_enable_first),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight(550),
+                            color = colorScheme.onSurfaceVariantSummary,
+                        )
+                    }
                 }
             }
         } else if (module.liveApplyApplied) {
@@ -1017,9 +1035,7 @@ fun ModuleItem(
                             }
                         }
                     }
-                    if (module.liveApplyEnabled && module.liveApply != null &&
-                        !module.liveApplyApplied && module.enabled
-                    ) {
+                    if (module.canApplyNow()) {
                         Row(
                             modifier = Modifier
                                 .heightIn(min = 35.dp)

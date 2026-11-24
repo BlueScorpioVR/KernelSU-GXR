@@ -176,6 +176,9 @@ fun ModulePager(
         onApplyModuleNow = { module ->
             viewModel.applyModuleNow(module)
         },
+        onApplyAllModulesNow = {
+            viewModel.applyAllModulesNow()
+        },
     )
 
     when (uiMode) {

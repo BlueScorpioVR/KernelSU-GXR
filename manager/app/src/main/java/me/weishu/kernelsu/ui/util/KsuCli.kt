@@ -177,6 +177,13 @@ fun applyModuleNow(id: String): Boolean {
     return result
 }
 
+fun applyAllModulesNow(): Boolean {
+    val cmd = "module live-apply-all"
+    val result = execKsud(cmd, true)
+    Log.i(TAG, "$cmd result: $result")
+    return result
+}
+
 fun undoUninstallModule(id: String): Boolean {
     val cmd = "module undo-uninstall $id"
     val result = execKsud(cmd, true)

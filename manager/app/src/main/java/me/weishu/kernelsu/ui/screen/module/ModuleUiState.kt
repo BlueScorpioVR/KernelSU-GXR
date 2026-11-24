@@ -80,4 +80,5 @@ data class ModuleActions(
     val onExecuteModuleAction: (Module) -> Unit,
     val onSetLiveApplyPref: (Module, Boolean) -> Unit,
     val onApplyModuleNow: (Module) -> Unit,
+    val onApplyAllModulesNow: () -> Unit,
 )

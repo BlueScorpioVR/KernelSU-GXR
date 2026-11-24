@@ -124,6 +124,13 @@
     <string name="module_apply_now_success">%s applied without a restart</string>
     <string name="module_apply_now_failed">%1$s could not be applied; see /dev/ksu-live-apply/%2$s.apply.log</string>
     <string name="module_apply_now_pref_failed">Could not update Apply now for %s</string>
+    <string name="module_apply_now_enable_first">Enable the module to apply it now.</string>
+    <string name="module_apply_all">Apply all checked</string>
+    <string name="module_apply_all_started">Applying checked modules…</string>
+    <string name="module_apply_all_success">Checked modules applied</string>
+    <string name="module_apply_all_failed">Some modules failed to apply; see /dev/ksu-live-apply/</string>
+    <string name="home_pr_build">PR build</string>
+    <string name="home_pr_build_summary">Not the device manager; module changes apply from this app.</string>
     <string name="new_version_available">New version %s is available, click to upgrade!</string>
     <string name="manager_update_downloading">Downloading KernelSU GXR %s…</string>
     <string name="manager_update_installing">Verified. Installing the Manager update; the app will restart.</string>

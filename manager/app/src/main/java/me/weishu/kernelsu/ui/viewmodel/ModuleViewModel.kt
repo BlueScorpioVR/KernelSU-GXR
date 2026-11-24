@@ -43,6 +43,7 @@ import okhttp3.Request
 import java.text.Collator
 import java.util.Locale
 import kotlin.time.Duration.Companion.milliseconds
+import me.weishu.kernelsu.ui.util.applyAllModulesNow as applyAllModulesNowUtil
 import me.weishu.kernelsu.ui.util.applyModuleNow as applyModuleNowUtil
 import me.weishu.kernelsu.ui.util.setLiveApplyPref as setLiveApplyPrefUtil
 import me.weishu.kernelsu.ui.util.toggleModule as toggleModuleUtil
@@ -408,6 +409,23 @@ class ModuleViewModel(
                     )
                 )
             }
+        }
+    }
+
+    fun applyAllModulesNow() {
+        viewModelScope.launch {
+            val res = ksuApp.resources
+            emitEffect(ModuleEffect.Toast(res.getString(R.string.module_apply_all_started)))
+            val success = withContext(Dispatchers.IO) {
+                applyAllModulesNowUtil()
+            }
+            fetchModuleList(checkUpdate = false, resort = false)
+            val message = if (success) {
+                R.string.module_apply_all_success
+            } else {
+                R.string.module_apply_all_failed
+            }
+            emitEffect(ModuleEffect.Toast(res.getString(message)))
         }
     }
 

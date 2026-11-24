@@ -336,6 +336,9 @@ enum Module {
         id: String,
     },
 
+    /// apply every checked module without restarting Android
+    LiveApplyAll,
+
     /// set whether Apply now is offered for module <id>
     LivePref {
         /// module id
@@ -579,6 +582,7 @@ pub fn run() -> Result<()> {
                 Module::Disable { id } => module::disable_module(&id),
                 Module::Action { id } => module::run_action(&id),
                 Module::LiveApply { id } => crate::live_apply::apply(&id),
+                Module::LiveApplyAll => crate::live_apply::apply_all(),
                 Module::LivePref { id, state } => crate::live_apply::set_pref(&id, &state),
                 Module::List => module::list_modules(),
                 Module::Config { internal, command } => {
