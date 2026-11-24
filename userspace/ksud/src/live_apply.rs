@@ -570,7 +570,7 @@ mod runtime {
 
         ensure!(!restart_stage::blocked(), "A soft restart is in progress");
         ensure!(
-            read_pref(id).unwrap_or(default_enabled(entry, installed)),
+            read_pref(id).unwrap_or_else(|| default_enabled(entry, installed)),
             "Apply now is turned off for this module"
         );
         if let Some(reason) = skip_reason(entry, &module_path) {
@@ -601,7 +601,7 @@ mod runtime {
                 .and_then(|props| props.get("versionCode").cloned())
                 .and_then(|value| value.trim().parse::<u64>().ok())
                 .unwrap_or(0);
-            if !read_pref(id).unwrap_or(default_enabled(entry, installed)) {
+            if !read_pref(id).unwrap_or_else(|| default_enabled(entry, installed)) {
                 skipped += 1;
                 return Ok(());
             }
